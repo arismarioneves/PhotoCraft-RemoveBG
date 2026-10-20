@@ -105,10 +105,12 @@ def ensure_token(path: Path | None = None) -> str:
     path.write_text(token, encoding="ascii")
     user = os.environ.get("USERNAME")
     if user:
+        # icacls writes in the console code page; decode loosely, it is only logged.
         result = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
-                                capture_output=True, text=True)
+                                capture_output=True)
         if result.returncode != 0:
-            log.warning("icacls failed on %s: %s", path, result.stdout + result.stderr)
+            log.warning("icacls failed on %s: %s", path,
+                        (result.stdout + result.stderr).decode("oem", errors="replace"))
     return token
 
 

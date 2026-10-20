@@ -52,3 +52,9 @@ def test_ensure_token_creates_64_hex_once(tmp_path):
     t1 = ensure_token(tmp_path / "control.token")
     assert re.fullmatch(r"[0-9a-f]{64}", t1)
     assert ensure_token(tmp_path / "control.token") == t1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_ensure_token_works_under_a_folder_with_accents(tmp_path):
+    token = ensure_token(tmp_path / "Ação Éé" / "control.token")
+    assert re.fullmatch(r"[0-9a-f]{64}", token)
