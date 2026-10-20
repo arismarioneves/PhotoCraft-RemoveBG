@@ -5,7 +5,7 @@ from PIL import Image
 
 from removebg.config import Config, log_path
 from removebg.control import ControlError
-from removebg.helper import Helper, user_message
+from removebg.helper import Helper, is_transient, user_message
 from removebg.models import ModelError
 from removebg.photocraft import Job, JobError, Request
 
@@ -216,3 +216,10 @@ def test_user_messages_for_known_errors():
     assert user_message(MemoryError()) == MEMORY
     assert user_message(ModelError("download failed")) == "download failed"
     assert user_message(ControlError("no layer")) == "PhotoCraft refused a step: no layer"
+
+
+def test_photocraft_timeouts_are_transient():
+    # PhotoCraft answers this while it quits or is not drawing frames; the request can be resent
+    assert is_transient(ControlError("timeout: not run — the request was still queued when its 60s deadline passed"))
+    assert not is_transient(ControlError("command `x` is not available right now"))
+    assert not is_transient(ValueError("timeout: not run"))

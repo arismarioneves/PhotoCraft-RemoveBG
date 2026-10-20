@@ -47,6 +47,11 @@ def user_message(err: BaseException) -> str:
     return f"Remove Background (AI) failed: {type(err).__name__}: {text}. Details: {log_path()}"
 
 
+def is_transient(err: BaseException) -> bool:
+    """PhotoCraft's "timeout: …" replies: it was quitting or not drawing frames; nothing ran."""
+    return isinstance(err, ControlError) and str(err).startswith("timeout:")
+
+
 def default_matter(model: str) -> Matter:
     return Matter(ensure_model(MODELS[model], report=log.info))
 
@@ -160,15 +165,22 @@ def _main() -> int:
         show_error(f"The settings file could not be read: {err}", wait=True)
         return 1
 
-    lock = socket.socket()
-    try:
-        lock.bind(("127.0.0.1", cfg.lock_port))
-    except OSError:
+    lock = _bind(cfg.lock_port)
+    if lock is None:
         try:
             Control(cfg.control_port, ensure_token()).call("ui.focus")
+            return 0
         except (OSError, ControlError):
             pass
-        return 0
+        # No PhotoCraft answers: the previous helper is still winding down after PhotoCraft closed.
+        deadline = time.monotonic() + GONE_AFTER_SECONDS + 10
+        while lock is None and time.monotonic() < deadline:
+            time.sleep(0.5)
+            lock = _bind(cfg.lock_port)
+        if lock is None:
+            show_error(f"Port {cfg.lock_port} is in use by another program. Change lockPort in {config_path()}.",
+                       wait=True)
+            return 1
 
     token = ensure_token()
     exchange_dir().mkdir(parents=True, exist_ok=True)
@@ -177,6 +189,16 @@ def _main() -> int:
             return 1
     log.info("Helper started")
     return _serve(cfg, token)
+
+
+def _bind(port: int) -> socket.socket | None:
+    sock = socket.socket()
+    try:
+        sock.bind(("127.0.0.1", port))
+        return sock
+    except OSError:
+        sock.close()
+        return None
 
 
 def _launch(cfg: Config) -> bool:
@@ -231,11 +253,14 @@ def _serve(cfg: Config, token: str) -> int:
                 except OSError:
                     raise
                 except Exception as err:
-                    log.exception("Polling failed")
-                    message = user_message(err)
-                    if message not in shown:
-                        shown.add(message)
-                        show_error(message)
+                    if is_transient(err):
+                        log.info("PhotoCraft did not answer in time: %s", err)
+                    else:
+                        log.exception("Polling failed")
+                        message = user_message(err)
+                        if message not in shown:
+                            shown.add(message)
+                            show_error(message)
                     time.sleep(2)
                 time.sleep(POLL_SECONDS)
         except OSError as err:
