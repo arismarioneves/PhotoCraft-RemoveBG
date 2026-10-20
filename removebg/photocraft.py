@@ -85,7 +85,7 @@ def begin(ctl: Control, req: Request) -> Job:
     layer = doc["activeLayer"]
     info = _layer(doc, layer)
     key = f"removebg-{time.time_ns()}"
-    if doc["history"][-1:] == [MENU_NAME] and doc["revision"] == req.revision:
+    if doc["history"][-1:] == [MENU_NAME]:
         ctl.run("edit.undo")
     ctl.run("plugin.run", {"id": PLUGIN_ID, "coalesce": key})
     if info.get("kind") == "Smart Object":
@@ -157,6 +157,13 @@ def remove_leftover_indicators(ctl: Control) -> int:
     if removed and session.get("active") is not None:
         ctl.run("document.activate", {"document": session["active"]})
     return removed
+
+
+def revision_of(ctl: Control, req: Request) -> int | None:
+    for doc in _documents(ctl):
+        if (doc["name"], doc.get("path")) == (req.name, req.path):
+            return doc["revision"]
+    return None
 
 
 def _documents(ctl: Control) -> list[dict]:

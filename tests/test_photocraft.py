@@ -5,6 +5,7 @@ from PIL import Image
 
 from removebg.photocraft import (
     INDICATOR_NAME, JobError, Request, abort, apply_mask, begin, export_layer, find_requests, poll_requests,
+    revision_of,
 )
 from removebg.trigger import MENU_NAME, PLUGIN_ID
 
@@ -167,6 +168,16 @@ def test_abort_leaves_layer_unchanged(app, exchange, photo):
 
 
 @pytest.mark.photocraft
+def test_stale_request_revision_still_gives_one_step(app, exchange, photo):
+    before = history(app, photo)
+    req = trigger(app, photo)
+    job = begin(app, Request(req.index, req.name, req.path, req.revision - 1))
+    exported = export_layer(app, job, exchange)
+    apply_mask(app, job, write_half(exported, exchange, job.key, "left"), exchange)
+    assert history(app, photo) == before + [MENU_NAME]
+
+
+@pytest.mark.photocraft
 def test_lab_document_is_refused(app):
     app.run("file.new", {"mode": "lab", "width": 64, "height": 64, "name": "lab-test"})
     try:
@@ -176,3 +187,15 @@ def test_lab_document_is_refused(app):
     finally:
         doc = next(d for d in app.call("ui.inspect")["session"]["documents"] if d["name"] == "lab-test")
         app.run("file.close", {"document": doc["index"]})
+
+
+@pytest.mark.photocraft
+def test_revision_of_follows_the_document_and_is_none_once_closed(app, exchange):
+    from conftest import _close_photo, _open_photo
+    p = _open_photo(app, exchange, "low-contrast.jpg")
+    req = trigger(app, p)
+    app.run("edit.undo")
+    current = next(d["revision"] for d in app.call("ui.inspect")["session"]["documents"] if d["name"] == p.name)
+    assert revision_of(app, req) == current != req.revision
+    _close_photo(app, p)
+    assert revision_of(app, req) is None
