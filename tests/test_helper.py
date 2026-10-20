@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from PIL import Image
 
@@ -125,6 +127,53 @@ def test_oserror_propagates_for_reconnect():
     h = Helper(Config(), ctl=None, ops=FakeOps(poll_error=ConnectionResetError()), notify=lambda m: None)
     with pytest.raises(OSError):
         h.step()
+
+
+class CorruptExportOps(FakeOps):
+    def export_layer(self, ctl, job, exchange):
+        exchange.mkdir(parents=True, exist_ok=True)
+        path = exchange / f"{job.key}-in.png"
+        path.write_bytes(b"not a png")
+        return path
+
+
+def test_local_file_error_is_a_normal_failure():
+    ops = CorruptExportOps(requests=[[req(1)]])
+    notes = []
+    h = Helper(Config(), ctl=None, ops=ops, matter_factory=lambda model: FakeMatter(), notify=notes.append)
+    h.step()
+    assert ops.aborted == [1] and len(notes) == 1
+
+
+def test_lost_connection_during_a_job_propagates():
+    ops = FakeOps(requests=[[req(1)]], begin_error=ConnectionResetError())
+    h = Helper(Config(), ctl=None, ops=ops, matter_factory=lambda model: FakeMatter(), notify=lambda m: None)
+    with pytest.raises(ConnectionError):
+        h.step()
+
+
+class PingCounter:
+    def __init__(self):
+        self.pings = 0
+
+    def call(self, method, params=None):
+        assert method == "ui.inspect"
+        self.pings += 1
+
+
+class SlowMatter(FakeMatter):
+    def matte(self, image):
+        time.sleep(0.4)
+        return super().matte(image)
+
+
+def test_connection_is_kept_alive_while_the_model_runs():
+    ctl = PingCounter()
+    h = Helper(Config(), ctl=ctl, ops=FakeOps(requests=[[req(1)]]), matter_factory=lambda model: SlowMatter(),
+               notify=lambda m: None)
+    h.keepalive_seconds = 0.1
+    h.step()
+    assert ctl.pings >= 2
 
 
 def test_model_is_unloaded_after_ten_idle_minutes():

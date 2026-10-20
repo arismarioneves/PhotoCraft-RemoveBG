@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Callable
 
@@ -28,6 +29,8 @@ from .photocraft import JobError
 IDLE_UNLOAD_SECONDS = 600
 POLL_SECONDS = 0.5
 GONE_AFTER_SECONDS = 10
+# PhotoCraft drops connections that stay idle for 30 s; loading or downloading the model can take longer.
+KEEPALIVE_SECONDS = 10
 MEMORY_MESSAGE = "Not enough memory to remove the background. Close other programs and try again."
 
 log = logging.getLogger("removebg.helper")
@@ -64,6 +67,7 @@ class Helper:
         self._matter: Matter | None = None
         self._last_use = clock()
         self._warned = False
+        self.keepalive_seconds = KEEPALIVE_SECONDS
 
     def step(self) -> None:
         for request in self.ops.poll_requests(self.ctl, self.handled, self.seen):
@@ -85,7 +89,7 @@ class Helper:
             marks.append(time.perf_counter())
             with Image.open(exported) as img:
                 image = img.convert("RGBA")
-            matte = self._get_matter().matte(image)
+            matte = self._matte_keeping_alive(image)
             mask = Image.new("RGBA", image.size, (255, 255, 255, 0))
             mask.putalpha(matte)
             matte_png = exchange / f"{job.key}-matte.png"
@@ -96,14 +100,14 @@ class Helper:
             begin_s, export_s, model_s, apply_s = (b - a for a, b in zip(marks, marks[1:]))
             log.info("Removed the background of %s in %.1f s (start %.1f, export %.1f, model %.1f, mask %.1f)",
                      request.name, marks[-1] - marks[0], begin_s, export_s, model_s, apply_s)
-        except OSError:
+        except (ConnectionError, TimeoutError):
             raise
         except Exception as err:
             log.exception("Request on %s failed", request.name)
             if job is not None:
                 try:
                     self.ops.abort(self.ctl, job)
-                except OSError:
+                except (ConnectionError, TimeoutError):
                     raise
                 except Exception:
                     log.exception("Cleanup after the failure also failed")
@@ -118,6 +122,13 @@ class Helper:
                     leftover.unlink(missing_ok=True)
         finally:
             self._last_use = self.clock()
+
+    def _matte_keeping_alive(self, image: Image.Image) -> Image.Image:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lambda: self._get_matter().matte(image))
+            while not wait([future], timeout=self.keepalive_seconds).done:
+                self.ctl.call("ui.inspect")
+            return future.result()
 
     def _get_matter(self) -> Matter:
         if self._matter is None:
