@@ -108,8 +108,11 @@ class Helper:
                 except Exception:
                     log.exception("Cleanup after the failure also failed")
             self.notify(user_message(err))
-            current = self.ops.revision_of(self.ctl, request)
-            self.handled[key] = current if current is not None else request.revision
+            current = self.ops.history_of(self.ctl, request)
+            if current is None:
+                self.handled.pop(key, None)
+            else:
+                self.handled[key] = current
             if job is not None:
                 for leftover in exchange.glob(f"{job.key}-*"):
                     leftover.unlink(missing_ok=True)

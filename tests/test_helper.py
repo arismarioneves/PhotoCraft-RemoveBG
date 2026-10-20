@@ -20,6 +20,7 @@ class FakeOps:
         self.poll_error = poll_error
         self.begin_error = begin_error
         self.aborted, self.applied, self.polled_handled = [], [], []
+        self.closed = False
 
     def poll_requests(self, ctl, handled, seen):
         if self.poll_error:
@@ -41,13 +42,13 @@ class FakeOps:
     def apply_mask(self, ctl, job, matte_png, exchange):
         assert Image.open(matte_png).size == (8, 6)
         self.applied.append(job.request.revision)
-        return job.request.revision + 100
+        return ("Open", "Remove Background (AI)", f"done {job.request.revision}")
 
     def abort(self, ctl, job):
         self.aborted.append(job.request.revision)
 
-    def revision_of(self, ctl, request):
-        return request.revision + 50
+    def history_of(self, ctl, request):
+        return None if self.closed else ("Open", f"after failure {request.revision}")
 
 
 class FakeMatter:
@@ -91,7 +92,7 @@ def test_failed_request_is_marked_with_the_revision_after_cleanup():
                matter_factory=lambda model: FakeMatter(fail_on_call=1, error=ValueError("boom")))
     h.step()
     h.step()
-    assert ops.polled_handled[-1] == {("a.jpg", "a.jpg"): 51}
+    assert ops.polled_handled[-1] == {("a.jpg", "a.jpg"): ("Open", "after failure 1")}
 
 
 def test_successful_request_is_marked_with_the_revision_after_the_mask():
@@ -99,7 +100,17 @@ def test_successful_request_is_marked_with_the_revision_after_the_mask():
     h = Helper(Config(), ctl=None, ops=ops, matter_factory=lambda model: FakeMatter(), notify=lambda m: None)
     h.step()
     h.step()
-    assert ops.polled_handled[-1] == {("a.jpg", "a.jpg"): 103}
+    assert ops.polled_handled[-1] == {("a.jpg", "a.jpg"): ("Open", "Remove Background (AI)", "done 3")}
+
+
+def test_failure_on_a_closed_document_forgets_it():
+    ops = FakeOps(requests=[[req(1)], []])
+    ops.closed = True
+    h = Helper(Config(), ctl=None, ops=ops, notify=lambda m: None,
+               matter_factory=lambda model: FakeMatter(fail_on_call=1, error=ValueError("boom")))
+    h.step()
+    h.step()
+    assert ops.polled_handled[-1] == {}
 
 
 def test_refused_document_shows_the_reason_without_abort():

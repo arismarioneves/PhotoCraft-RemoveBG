@@ -56,17 +56,28 @@ def install_trigger(ctl: Control) -> None:
 
 
 def find_requests(documents: list[dict], histories: dict[int, list[str]],
-                  handled: dict[tuple[str, str | None], int]) -> list[Request]:
+                  handled: dict[tuple[str, str | None], tuple[str, ...]]) -> list[Request]:
+    """A request is a history that changed since it was last seen and now ends in the trigger.
+
+    The revision is no use here: selecting a layer or a mask raises it without a history step.
+    A document seen for the first time is only a baseline.
+    """
     found = []
     for doc in sorted(documents, key=lambda d: d["index"]):
-        steps = histories.get(doc["index"]) or []
-        if steps[-1:] == [MENU_NAME] and handled.get((doc["name"], doc.get("path"))) != doc["revision"]:
+        steps = tuple(histories.get(doc["index"]) or ())
+        before = handled.get((doc["name"], doc.get("path")))
+        if before is not None and steps != before and steps[-1:] == (MENU_NAME,):
             found.append(Request(doc["index"], doc["name"], doc.get("path"), doc["revision"]))
     return found
 
 
 def poll_requests(ctl: Control, handled: dict, seen_revisions: dict) -> list[Request]:
     documents = _documents(ctl)
+    open_keys = {(doc["name"], doc.get("path")) for doc in documents}
+    for gone in [key for key in handled if key not in open_keys]:
+        del handled[gone]
+    for gone in [key for key in seen_revisions if key not in open_keys]:
+        del seen_revisions[gone]
     changed, histories = [], {}
     for doc in documents:
         key = (doc["name"], doc.get("path"))
@@ -78,7 +89,10 @@ def poll_requests(ctl: Control, handled: dict, seen_revisions: dict) -> list[Req
             continue  # closed since the document list was read
         seen_revisions[key] = doc["revision"]
         changed.append(doc)
-    return find_requests(changed, histories, handled)
+    requests = find_requests(changed, histories, handled)
+    for doc in changed:
+        handled[(doc["name"], doc.get("path"))] = tuple(histories[doc["index"]])
+    return requests
 
 
 def begin(ctl: Control, req: Request) -> Job:
@@ -118,7 +132,7 @@ def export_layer(ctl: Control, job: Job, exchange: Path) -> Path:
     return exchange / name
 
 
-def apply_mask(ctl: Control, job: Job, matte_png: Path, exchange: Path) -> int:
+def apply_mask(ctl: Control, job: Job, matte_png: Path, exchange: Path) -> tuple[str, ...]:
     origin = _resolve(ctl, job.request)
     ctl.call("app.open", {"path": matte_png.relative_to(exchange).as_posix()})
     temp = ctl.call("ui.inspect")["session"]["active"]
@@ -134,7 +148,7 @@ def apply_mask(ctl: Control, job: Job, matte_png: Path, exchange: Path) -> int:
     ctl.run("layer.select", {"layer": job.layer, "coalesce": job.key})
     for leftover in exchange.glob(f"{job.key}-*"):
         leftover.unlink(missing_ok=True)
-    return ctl.run("document.inspect")["revision"]
+    return tuple(ctl.run("document.inspect")["history"])
 
 
 def abort(ctl: Control, job: Job) -> None:
@@ -163,11 +177,12 @@ def remove_leftover_indicators(ctl: Control) -> int:
     return removed
 
 
-def revision_of(ctl: Control, req: Request) -> int | None:
-    for doc in _documents(ctl):
-        if (doc["name"], doc.get("path")) == (req.name, req.path):
-            return doc["revision"]
-    return None
+def history_of(ctl: Control, req: Request) -> tuple[str, ...] | None:
+    try:
+        index = _resolve(ctl, req)
+        return tuple(ctl.run("document.inspect", {"document": index})["history"])
+    except (JobError, ControlError):
+        return None
 
 
 def _documents(ctl: Control) -> list[dict]:
