@@ -81,7 +81,8 @@ type `I ACCEPT` after reading the license summary. `install.ps1 -Model isnet` sw
   `%LOCALAPPDATA%\PhotoCraft-RemoveBG\config.json`.
 - **"This PhotoCraft version is not supported".** A newer PhotoCraft changed something this
   add-on depends on; check for an update here.
-- Keep the PhotoCraft window open while it works; behaviour with a minimized window was not tested.
+- Minimizing PhotoCraft while it works is fine (tested on Windows 11). If you reopen PhotoCraft
+  with the shortcut right after closing it, it can take up to about 20 seconds to appear.
 
 ## Known limitations
 
