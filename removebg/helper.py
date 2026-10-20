@@ -78,8 +78,11 @@ class Helper:
         exchange = exchange_dir()
         job = None
         try:
+            marks = [time.perf_counter()]
             job = self.ops.begin(self.ctl, request)
+            marks.append(time.perf_counter())
             exported = self.ops.export_layer(self.ctl, job, exchange)
+            marks.append(time.perf_counter())
             with Image.open(exported) as img:
                 image = img.convert("RGBA")
             matte = self._get_matter().matte(image)
@@ -87,8 +90,12 @@ class Helper:
             mask.putalpha(matte)
             matte_png = exchange / f"{job.key}-matte.png"
             mask.save(matte_png, compress_level=1)
+            marks.append(time.perf_counter())
             self.handled[key] = self.ops.apply_mask(self.ctl, job, matte_png, exchange)
-            log.info("Removed the background of %s", request.name)
+            marks.append(time.perf_counter())
+            begin_s, export_s, model_s, apply_s = (b - a for a, b in zip(marks, marks[1:]))
+            log.info("Removed the background of %s in %.1f s (start %.1f, export %.1f, model %.1f, mask %.1f)",
+                     request.name, marks[-1] - marks[0], begin_s, export_s, model_s, apply_s)
         except OSError:
             raise
         except Exception as err:

@@ -16,7 +16,7 @@ REQUIRED_COMMANDS = (
     "plugin.install", "plugin.run", "document.inspect", "document.activate", "layer.duplicate",
     "layer.setProps", "layer.copyToDocument", "layer.delete", "layer.select", "select.loadSelection",
     "layer.layerMask.revealSelection", "layer.layerMask.delete", "layer.newFillLayer.solidColor",
-    "layer.createClippingMask", "layer.smartFilter.delete", "file.close", "edit.undo",
+    "layer.smartFilter.delete", "file.close", "edit.undo",
 )
 INDICATOR_NAME = "Removing background…"
 INDICATOR_COLOR = "#1e90ff"
@@ -42,6 +42,8 @@ class Job:
     layer: int
     key: str
     indicator: int | None
+    visible: bool = True
+    has_mask: bool = False
 
 
 def missing_commands(ctl: Control) -> list[str]:
@@ -70,8 +72,11 @@ def poll_requests(ctl: Control, handled: dict, seen_revisions: dict) -> list[Req
         key = (doc["name"], doc.get("path"))
         if seen_revisions.get(key) == doc["revision"]:
             continue
+        try:
+            histories[doc["index"]] = ctl.run("document.inspect", {"document": doc["index"]})["history"]
+        except ControlError:
+            continue  # closed since the document list was read
         seen_revisions[key] = doc["revision"]
-        histories[doc["index"]] = ctl.run("document.inspect", {"document": doc["index"]})["history"]
         changed.append(doc)
     return find_requests(changed, histories, handled)
 
@@ -90,23 +95,21 @@ def begin(ctl: Control, req: Request) -> Job:
     ctl.run("plugin.run", {"id": PLUGIN_ID, "coalesce": key})
     if info.get("kind") == "Smart Object":
         ctl.run("layer.smartFilter.delete", {"layer": layer, "coalesce": key})
+    # The indicator covers the whole canvas: clipping it to the layer would cost another
+    # PhotoCraft command (about half a second each on a CPU-rendered canvas).
     indicator = ctl.run("layer.newFillLayer.solidColor", {"color": INDICATOR_COLOR, "coalesce": key})["layer"]
     ctl.run("layer.setProps", {"layer": indicator, "name": INDICATOR_NAME, "opacity": INDICATOR_OPACITY,
                                "coalesce": key})
-    ctl.run("layer.createClippingMask", {"layer": indicator, "coalesce": key})
-    ctl.run("layer.select", {"layer": layer, "coalesce": key})
-    return Job(req, layer, key, indicator)
+    return Job(req, layer, key, indicator, info.get("visible", True), bool(info.get("hasMask")))
 
 
 def export_layer(ctl: Control, job: Job, exchange: Path) -> Path:
-    _activate(ctl, job.request)
-    info = _layer(ctl.run("document.inspect"), job.layer)
     copy = ctl.run("layer.duplicate", {"layer": job.layer, "document": "new", "documentName": job.key})
     temp = copy["document"]
     copy_layer = copy["layers"][0]
-    if not info.get("visible", True):
+    if not job.visible:
         ctl.run("layer.setProps", {"layer": copy_layer, "visible": True})
-    if info.get("hasMask"):
+    if job.has_mask:
         ctl.run("layer.layerMask.delete", {"layer": copy_layer})
     name = f"{job.key}-in.png"
     ctl.call("app.save", {"path": name})
@@ -121,7 +124,8 @@ def apply_mask(ctl: Control, job: Job, matte_png: Path, exchange: Path) -> int:
     temp = ctl.call("ui.inspect")["session"]["active"]
     new = ctl.run("layer.copyToDocument", {"document": origin, "source": temp, "coalesce": job.key})["layers"][0]
     ctl.run("file.close", {"document": temp})
-    _activate(ctl, job.request)
+    # The temporary document opened last, so closing it leaves the origin's index unchanged.
+    ctl.run("document.activate", {"document": origin})
     ctl.run("select.loadSelection", {"channel": "transparency", "layer": new, "coalesce": job.key})
     ctl.run("layer.layerMask.revealSelection", {"layer": job.layer, "coalesce": job.key})
     ctl.run("layer.delete", {"layer": new, "coalesce": job.key})
@@ -170,16 +174,22 @@ def _documents(ctl: Control) -> list[dict]:
     return ctl.call("ui.inspect")["session"]["documents"]
 
 
-def _resolve(ctl: Control, req: Request) -> int:
-    for doc in _documents(ctl):
+def _find(documents: list[dict], req: Request) -> int:
+    for doc in documents:
         if (doc["name"], doc.get("path")) == (req.name, req.path):
             return doc["index"]
     raise JobError("The document was closed.")
 
 
+def _resolve(ctl: Control, req: Request) -> int:
+    return _find(_documents(ctl), req)
+
+
 def _activate(ctl: Control, req: Request) -> int:
-    index = _resolve(ctl, req)
-    ctl.run("document.activate", {"document": index})
+    session = ctl.call("ui.inspect")["session"]
+    index = _find(session["documents"], req)
+    if session.get("active") != index:
+        ctl.run("document.activate", {"document": index})
     return index
 
 

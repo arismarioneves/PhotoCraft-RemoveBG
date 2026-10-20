@@ -7,6 +7,7 @@ from removebg.photocraft import (
     INDICATOR_NAME, JobError, Request, abort, apply_mask, begin, export_layer, find_requests, poll_requests,
     revision_of,
 )
+from removebg.control import ControlError
 from removebg.trigger import MENU_NAME, PLUGIN_ID
 
 
@@ -29,6 +30,23 @@ def test_triggers_in_two_documents_come_in_index_order():
     docs = [{"index": 1, "name": "b", "path": None, "revision": 4}, {"index": 0, "name": "a", "path": None, "revision": 2}]
     hist = {0: ["Open", MENU_NAME], 1: ["Open", MENU_NAME]}
     assert [r.index for r in find_requests(docs, hist, {})] == [0, 1]
+
+
+class _DocumentClosedWhilePolling:
+    """Lists two documents, then the first one is gone when it is inspected."""
+
+    def call(self, method, params=None):
+        return {"session": {"documents": [{"index": 0, "name": "a", "path": "a", "revision": 3},
+                                          {"index": 1, "name": "b", "path": "b", "revision": 5}]}}
+
+    def run(self, command, params=None):
+        if params["document"] == 0:
+            raise ControlError("command `document.inspect` is not available right now: no document open")
+        return {"history": ["Open", MENU_NAME]}
+
+
+def test_document_closed_while_polling_is_skipped():
+    assert [r.name for r in poll_requests(_DocumentClosedWhilePolling(), {}, {})] == ["b"]
 
 
 # --- live PhotoCraft -------------------------------------------------------------------------
@@ -117,7 +135,7 @@ def test_round_trip_is_one_undo_step(app, exchange, photo):
 def test_indicator_exists_during_job_and_is_gone_after(app, exchange, photo):
     job = begin(app, trigger(app, photo))
     ind = [item for item in layers(app, photo) if item["name"] == INDICATOR_NAME]
-    assert len(ind) == 1 and ind[0]["kind"] == "Fill" and ind[0]["clipped"]
+    assert len(ind) == 1 and ind[0]["kind"] == "Fill"
     exported = export_layer(app, job, exchange)
     apply_mask(app, job, write_half(exported, exchange, job.key, "left"), exchange)
     assert no_indicator(app, photo)
