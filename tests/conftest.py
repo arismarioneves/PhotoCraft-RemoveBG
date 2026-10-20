@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -18,3 +19,12 @@ def shared_models(monkeypatch):
     cache.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("PHOTOCRAFT_REMOVEBG_MODELS", str(cache))
     return cache
+
+
+
+@pytest.fixture
+def photocraft_cli():
+    cli = os.environ.get("PHOTOCRAFT_CLI")
+    if not cli or not Path(cli).is_file():
+        pytest.skip("set PHOTOCRAFT_CLI to photocraft-cli.exe")
+    return Path(cli)
