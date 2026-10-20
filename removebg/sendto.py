@@ -42,6 +42,16 @@ def output_path(src: Path) -> Path:
     return src.parent / OUTPUT_DIR / f"{src.stem}.png"
 
 
+def output_paths(sources: list[Path]) -> list[Path]:
+    """Like output_path, but files that would land on the same PNG keep their extension in the name."""
+    targets = [output_path(src) for src in sources]
+    counts = {}
+    for target in targets:
+        counts[str(target).lower()] = counts.get(str(target).lower(), 0) + 1
+    return [target.with_name(f"{src.stem}-{src.suffix[1:].lower()}.png") if counts[str(target).lower()] > 1 else target
+            for src, target in zip(sources, targets)]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     pause = "--pause" in args
@@ -68,13 +78,12 @@ def _run(paths: list[str]) -> int:
         return 1
 
     saved = failed = 0
-    for n, src in enumerate(images, 1):
+    for n, (src, target) in enumerate(zip(images, output_paths(images)), 1):
         label = f"[{n}/{len(images)}] {src.name}"
         try:
             started = time.perf_counter()
             with Image.open(src) as img:
                 image = ImageOps.exif_transpose(img).convert("RGBA")
-            target = output_path(src)
             target.parent.mkdir(exist_ok=True)
             cutout(image, matter.matte(image)).save(target, optimize=True)
             print(f"{label} -> {OUTPUT_DIR}\\{target.name} ({time.perf_counter() - started:.1f}s)")

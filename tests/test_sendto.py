@@ -5,7 +5,7 @@ import pytest
 from PIL import Image
 
 from conftest import FIXTURES
-from removebg.sendto import collect, main, output_path
+from removebg.sendto import collect, main, output_path, output_paths
 
 
 def test_collect_recurses_skips_cutouts_and_dedupes(tmp_path):
@@ -33,6 +33,12 @@ def test_missing_path_is_reported_and_skipped(tmp_path, capsys):
 
 def test_output_path():
     assert output_path(Path(r"C:\x\foto.jpeg")) == Path(r"C:\x\cutouts\foto.png")
+
+
+def test_same_name_with_different_extensions_gets_distinct_outputs():
+    sources = [Path(r"C:\x\a.jpg"), Path(r"C:\x\a.png"), Path(r"C:\x\b.jpg"), Path(r"C:\y\a.jpg")]
+    assert output_paths(sources) == [Path(r"C:\x\cutouts\a-jpg.png"), Path(r"C:\x\cutouts\a-png.png"),
+                                     Path(r"C:\x\cutouts\b.png"), Path(r"C:\y\cutouts\a.png")]
 
 
 def test_nothing_to_do_returns_1(tmp_path):
