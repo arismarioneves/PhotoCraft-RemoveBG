@@ -51,6 +51,8 @@ def main() -> int:
     env = dict(os.environ, PHOTOCRAFT_REMOVEBG_HOME=str(home),
                PHOTOCRAFT_REMOVEBG_MODELS=os.environ.get("PHOTOCRAFT_REMOVEBG_MODELS",
                                                          str(REPO / ".cache" / "models")))
+    if port_open(PORT):
+        raise SystemExit(f"port {PORT} is already in use; close the PhotoCraft left open by an earlier run")
     helper = subprocess.Popen([sys.executable, "-m", "removebg.helper"], cwd=REPO, env=env)
     failures = []
     rows = []

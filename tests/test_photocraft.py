@@ -19,9 +19,21 @@ def test_trigger_after_a_seen_history_is_a_request():
     assert find_requests(docs, {0: ["Open", MENU_NAME]}, {KEY_A: ("Open",)}) == [Request(0, "a.jpg", "a.jpg", 2)]
 
 
-def test_first_sight_of_a_document_is_only_a_baseline():
+def test_new_document_already_clicked_is_a_request():
+    # opened and clicked before the helper looked (for example while it was busy with another job)
     docs = [{"index": 0, "name": "a.jpg", "path": "a.jpg", "revision": 2}]
-    assert find_requests(docs, {0: ["Open", MENU_NAME]}, {}) == []
+    assert len(find_requests(docs, {0: ["Open", MENU_NAME]}, {})) == 1
+
+
+def test_new_document_without_the_trigger_is_not_a_request():
+    docs = [{"index": 0, "name": "a.jpg", "path": "a.jpg", "revision": 1}]
+    assert find_requests(docs, {0: ["Open"]}, {}) == []
+
+
+def test_renamed_document_is_not_a_request():
+    # Save As gives the document a new name and path but keeps its history
+    docs = [{"index": 0, "name": "a.psd", "path": "a.psd", "revision": 9}]
+    assert find_requests(docs, {0: ["Open", MENU_NAME]}, {}, renamed=[("Open", MENU_NAME)]) == []
 
 
 def test_unchanged_history_is_not_a_request():
@@ -76,6 +88,13 @@ def test_polling_remembers_histories_and_forgets_closed_documents():
     session.documents[0]["revision"] = 4
     session.histories[0] = ["Open", MENU_NAME]
     assert [r.name for r in poll_requests(session, handled, seen)] == ["a"]
+
+
+def test_save_as_after_a_job_is_not_a_request():
+    session = _FakeSession([{"index": 0, "name": "a.jpg", "path": "a.jpg", "revision": 5}], {0: ["Open", MENU_NAME]})
+    handled, seen = {("a.jpg", "a.jpg"): ("Open", MENU_NAME)}, {("a.jpg", "a.jpg"): 5}
+    session.documents[0] = {"index": 0, "name": "a.psd", "path": "a.psd", "revision": 6}
+    assert poll_requests(session, handled, seen) == []
 
 
 # --- live PhotoCraft -------------------------------------------------------------------------

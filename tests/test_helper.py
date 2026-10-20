@@ -223,3 +223,12 @@ def test_photocraft_timeouts_are_transient():
     assert is_transient(ControlError("timeout: not run — the request was still queued when its 60s deadline passed"))
     assert not is_transient(ControlError("command `x` is not available right now"))
     assert not is_transient(ValueError("timeout: not run"))
+
+
+def test_first_poll_after_starting_only_records_what_is_open():
+    # a helper restarted while PhotoCraft stays open must not redo finished cut-outs
+    ops = FakeOps(requests=[[req(1)], [req(2)]])
+    h = Helper(Config(), ctl=None, ops=ops, matter_factory=lambda model: FakeMatter(), notify=lambda m: None)
+    h.prime()
+    h.step()
+    assert ops.applied == [2]

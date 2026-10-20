@@ -56,17 +56,22 @@ def install_trigger(ctl: Control) -> None:
 
 
 def find_requests(documents: list[dict], histories: dict[int, list[str]],
-                  handled: dict[tuple[str, str | None], tuple[str, ...]]) -> list[Request]:
+                  handled: dict[tuple[str, str | None], tuple[str, ...]],
+                  renamed: list[tuple[str, ...]] = ()) -> list[Request]:
     """A request is a history that changed since it was last seen and now ends in the trigger.
 
     The revision is no use here: selecting a layer or a mask raises it without a history step.
-    A document seen for the first time is only a baseline.
+    A document seen for the first time counts too (it may have been opened and clicked while
+    the helper was busy), unless its history is that of a document that just disappeared:
+    Save As renames a document and keeps its history.
     """
     found = []
     for doc in sorted(documents, key=lambda d: d["index"]):
         steps = tuple(histories.get(doc["index"]) or ())
         before = handled.get((doc["name"], doc.get("path")))
-        if before is not None and steps != before and steps[-1:] == (MENU_NAME,):
+        if before is None and steps in renamed:
+            continue
+        if steps != before and steps[-1:] == (MENU_NAME,):
             found.append(Request(doc["index"], doc["name"], doc.get("path"), doc["revision"]))
     return found
 
@@ -74,8 +79,7 @@ def find_requests(documents: list[dict], histories: dict[int, list[str]],
 def poll_requests(ctl: Control, handled: dict, seen_revisions: dict) -> list[Request]:
     documents = _documents(ctl)
     open_keys = {(doc["name"], doc.get("path")) for doc in documents}
-    for gone in [key for key in handled if key not in open_keys]:
-        del handled[gone]
+    vanished = [handled.pop(key) for key in list(handled) if key not in open_keys]
     for gone in [key for key in seen_revisions if key not in open_keys]:
         del seen_revisions[gone]
     changed, histories = [], {}
@@ -89,7 +93,7 @@ def poll_requests(ctl: Control, handled: dict, seen_revisions: dict) -> list[Req
             continue  # closed since the document list was read
         seen_revisions[key] = doc["revision"]
         changed.append(doc)
-    requests = find_requests(changed, histories, handled)
+    requests = find_requests(changed, histories, handled, vanished)
     for doc in changed:
         handled[(doc["name"], doc.get("path"))] = tuple(histories[doc["index"]])
     return requests

@@ -74,6 +74,10 @@ class Helper:
         self._warned = False
         self.keepalive_seconds = KEEPALIVE_SECONDS
 
+    def prime(self) -> None:
+        """Record what is open without acting on it, so a restarted helper does not redo finished jobs."""
+        self.ops.poll_requests(self.ctl, self.handled, self.seen)
+
     def step(self) -> None:
         for request in self.ops.poll_requests(self.ctl, self.handled, self.seen):
             self._process(request)
@@ -247,6 +251,8 @@ def _serve(cfg: Config, token: str) -> int:
             if removed:
                 log.info("Removed %d leftover indicator layer(s)", removed)
             helper.ctl = ctl
+            if not helper.handled:
+                helper.prime()
             while True:
                 try:
                     helper.step()
